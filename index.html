@@ -3,22 +3,26 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Redirecting to Survey...</title>
-
+<title>Survey</title>
 <style>
   :root {
-    --brand:      #2E45B8;   
-    --bar-bg:     #ebedfa;   
-    --text:       #0d0d0d;
-    --radius:     4px;
-    --font:       system-ui, 'Segoe UI', sans-serif;
+    --brand:  #2E45B8;
+    --bar-bg: #ebedfa;
+    --text:   #0d0d0d;
+    --radius: 4px;
+    --font:   system-ui, 'Segoe UI', sans-serif;
   }
-
   *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
-  html, body { font-family: var(--font); background: transparent; color: var(--text); height: 100%; }
-  body { padding: 16px; display: flex; align-items: center; justify-content: center; }
+  html, body {
+    font-family: var(--font);
+    background: transparent;
+    color: var(--text);
+    /* No fixed height — let the body grow with content */
+  }
+  body { padding: 0; }
 
-  .poll {
+  /* ── Outer shell matches your poll card style ── */
+  .poll-shell {
     width: 100%;
     max-width: 600px;
     margin: 0 auto;
@@ -26,21 +30,19 @@
     border-radius: 8px;
     background: #ffffff;
     box-shadow: 0 4px 20px rgba(0,0,0,0.08);
-    padding: 24px;
-    min-height: 250px;
-    display: flex;
-    flex-direction: column;
-    justify-content: center;
+    overflow: hidden; /* clips the iframe cleanly inside the rounded card */
   }
 
+  /* ── Loading state (shown until iframe is ready) ── */
   #loading-view {
     display: flex;
     flex-direction: column;
     align-items: center;
+    justify-content: center;
     gap: 16px;
+    padding: 48px 24px;
     text-align: center;
   }
-
   .skel-loader {
     width: 50px;
     height: 50px;
@@ -49,20 +51,30 @@
     border-radius: 50%;
     animation: spin 1s linear infinite;
   }
-
   .loading-text {
     font-size: 16px;
     font-weight: 500;
     color: var(--text);
   }
-
   @keyframes spin {
-    0% { transform: rotate(0deg); }
+    0%   { transform: rotate(0deg); }
     100% { transform: rotate(360deg); }
   }
 
+  /* ── The Zoho iframe ── */
+  #zoho-frame {
+    display: none; /* hidden until load fires */
+    width: 100%;
+    border: none;
+    /* Height is set by JS once content loads */
+    /* Default fallback height — adjust per poll if needed */
+    height: 400px;
+  }
+
+  /* ── Error state ── */
   .error-banner {
     display: none;
+    margin: 16px;
     padding: 16px;
     background: #fdf3f2;
     border: 1px solid #e8b4b0;
@@ -76,78 +88,138 @@
 </head>
 <body>
 
-<div class="poll">
+<div class="poll-shell">
   <div id="loading-view">
     <div class="skel-loader"></div>
     <div class="loading-text">Loading your survey...</div>
   </div>
+
+  <iframe
+    id="zoho-frame"
+    title="Survey"
+    allowfullscreen="allowfullscreen"
+    scrolling="no">
+  </iframe>
+
   <div id="error-banner" class="error-banner"></div>
 </div>
 
 <script>
 (function () {
-  var urlParams  = new URLSearchParams(window.location.search);
-  var surveyId   = urlParams.get("survey") || null; 
+
+  /* ─────────────────────────────────────────
+     1. Read params from the wrapper page URL
+        e.g. index.html?survey=0uz2wv&uid=123
+     ───────────────────────────────────────── */
+  var urlParams = new URLSearchParams(window.location.search);
+  var surveyId  = urlParams.get("survey") || null;
 
   if (!surveyId) {
-    showError("Configuration Error: No survey target specified.");
+    showError("Configuration error: no survey ID specified.");
     return;
   }
 
-  // FIX: Force the guard flag onto the global window object 
-  // This guarantees that multiple instances or quick-succession events cannot double-trigger.
-  window.surveyRedirectStarted = window.surveyRedirectStarted || false;
+  /* ─────────────────────────────────────────
+     2. Build the Zoho URL and load the iframe
+        uid is appended when resolved (below)
+     ───────────────────────────────────────── */
+  var frame   = document.getElementById("zoho-frame");
+  var baseUrl = "https://survey.zohopublic.com/zs/" + surveyId;
 
-  function redirectToZoho(resolvedUid) {
-    // If a redirect was already initiated by another method/instance, ABORT immediately.
-    if (window.surveyRedirectStarted) return;
-    window.surveyRedirectStarted = true;
-
-    var baseUrl  = "https://survey.zohopublic.com/zs/" + surveyId;
-    var finalUrl = baseUrl + "?uid=" + encodeURIComponent(resolvedUid);
-
-    window.location.replace(finalUrl);
+  function loadSurvey(uid) {
+    var src = uid ? baseUrl + "?uid=" + encodeURIComponent(uid) : baseUrl;
+    frame.src = src;
   }
 
-  // ── RESOLVE USER ID ──
+  /* ─────────────────────────────────────────
+     3. Resolve UID — same priority chain
+        as before, just doesn't redirect now
+     ───────────────────────────────────────── */
+  var uidResolved = false;
 
-  // 1. Direct URL check
+  function resolveUid(uid) {
+    if (uidResolved) return;
+    uidResolved = true;
+    loadSurvey(uid);
+  }
+
+  // Priority 1: uid already in the URL
   var urlUid = urlParams.get("uid");
   if (urlUid) {
-    redirectToZoho(urlUid);
+    resolveUid(urlUid);
   }
 
-  // 2. Moodle postMessage Hook
-  window.addEventListener("message", function(event) {
+  // Priority 2: Moodle postMessage
+  window.addEventListener("message", function (event) {
     if (!event.data || event.data.type !== "moodleUserId") return;
-    redirectToZoho(String(event.data.userId));
+    resolveUid(String(event.data.userId));
   });
 
-  // 3. Fallback
-  setTimeout(function() {
-    // Double check the global flag before applying anonymous fallback
-    if (!window.surveyRedirectStarted) {
-      redirectToZoho("anonymous");
-    }
+  // Priority 3: anonymous fallback after 2.5 s
+  setTimeout(function () {
+    resolveUid("anonymous");
   }, 2500);
 
+  /* ─────────────────────────────────────────
+     4. Show iframe once it loads; hide spinner
+     ───────────────────────────────────────── */
+  frame.addEventListener("load", function () {
+    document.getElementById("loading-view").style.display = "none";
+    frame.style.display = "block";
+    sendHeight(); // report height immediately after reveal
+  });
+
+  /* ─────────────────────────────────────────
+     5. Height management
+        Zoho is cross-origin so we can't read
+        frame.contentDocument — instead we use
+        a generous fixed default and let the
+        Moodle listener use it directly.
+
+        FALLBACK HEIGHTS (edit to taste):
+          Voting screen  ~320px
+          Results screen ~380px
+        We use the larger value so results
+        never get clipped.
+     ───────────────────────────────────────── */
+  var FALLBACK_HEIGHT = 420; // px — adjust per survey if needed
+
+  function sendHeight() {
+    // Use the shell's actual rendered height so the card border is included
+    var h = document.querySelector(".poll-shell").offsetHeight || FALLBACK_HEIGHT;
+    window.parent.postMessage({
+      type:   "iframe-height",
+      pollId: (window.location.pathname.split("/").filter(Boolean)[0] || "zoho-poll"),
+      height: h
+    }, "*");
+  }
+
+  // Re-send on window resize (Moodle column width changes etc.)
+  window.addEventListener("resize", sendHeight);
+
+  // Also re-send a beat after the iframe loads to catch Zoho's own layout shift
+  frame.addEventListener("load", function () {
+    setTimeout(sendHeight, 800);
+    setTimeout(sendHeight, 2000); // second pass for slower Zoho renders
+  });
+
+  // ResizeObserver on the shell catches any height changes
+  if (window.ResizeObserver) {
+    new ResizeObserver(sendHeight).observe(document.querySelector(".poll-shell"));
+  }
+
+  /* ─────────────────────────────────────────
+     6. Error helper
+     ───────────────────────────────────────── */
   function showError(msg) {
     document.getElementById("loading-view").style.display = "none";
-    var errEl = document.getElementById("error-banner");
-    errEl.textContent = msg;
-    errEl.style.display = "block";
+    var el = document.getElementById("error-banner");
+    el.textContent = msg;
+    el.style.display = "block";
+    sendHeight();
   }
-})();
-</script>
 
-<script>
-  function sendHeight() {
-    window.parent.postMessage({ type: 'iframe-height', height: document.body.scrollHeight }, '*');
-  }
-  window.addEventListener('load', sendHeight);
-  window.addEventListener('resize', sendHeight);
-  var observer = new ResizeObserver(sendHeight);
-  observer.observe(document.body);
+})();
 </script>
 
 </body>
