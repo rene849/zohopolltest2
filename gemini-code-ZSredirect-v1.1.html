@@ -1,0 +1,154 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Redirecting to Survey...</title>
+
+<style>
+  :root {
+    --brand:      #2E45B8;   
+    --bar-bg:     #ebedfa;   
+    --text:       #0d0d0d;
+    --radius:     4px;
+    --font:       system-ui, 'Segoe UI', sans-serif;
+  }
+
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { font-family: var(--font); background: transparent; color: var(--text); height: 100%; }
+  body { padding: 16px; display: flex; align-items: center; justify-content: center; }
+
+  .poll {
+    width: 100%;
+    max-width: 600px;
+    margin: 0 auto;
+    border: 1px solid #ddd;
+    border-radius: 8px;
+    background: #ffffff;
+    box-shadow: 0 4px 20px rgba(0,0,0,0.08);
+    padding: 24px;
+    min-height: 250px;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+  }
+
+  #loading-view {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 16px;
+    text-align: center;
+  }
+
+  .skel-loader {
+    width: 50px;
+    height: 50px;
+    border: 5px solid var(--bar-bg);
+    border-top: 5px solid var(--brand);
+    border-radius: 50%;
+    animation: spin 1s linear infinite;
+  }
+
+  .loading-text {
+    font-size: 16px;
+    font-weight: 500;
+    color: var(--text);
+  }
+
+  @keyframes spin {
+    0% { transform: rotate(0deg); }
+    100% { transform: rotate(360deg); }
+  }
+
+  .error-banner {
+    display: none;
+    padding: 16px;
+    background: #fdf3f2;
+    border: 1px solid #e8b4b0;
+    border-radius: var(--radius);
+    font-size: 14px;
+    color: #7a2020;
+    line-height: 1.5;
+    text-align: center;
+  }
+</style>
+</head>
+<body>
+
+<div class="poll">
+  <div id="loading-view">
+    <div class="skel-loader"></div>
+    <div class="loading-text">Loading your survey...</div>
+  </div>
+  <div id="error-banner" class="error-banner"></div>
+</div>
+
+<script>
+(function () {
+  var urlParams  = new URLSearchParams(window.location.search);
+  var surveyId   = urlParams.get("survey") || null; 
+
+  if (!surveyId) {
+    showError("Configuration Error: No survey target specified.");
+    return;
+  }
+
+  // FIX: Force the guard flag onto the global window object 
+  // This guarantees that multiple instances or quick-succession events cannot double-trigger.
+  window.surveyRedirectStarted = window.surveyRedirectStarted || false;
+
+  function redirectToZoho(resolvedUid) {
+    // If a redirect was already initiated by another method/instance, ABORT immediately.
+    if (window.surveyRedirectStarted) return;
+    window.surveyRedirectStarted = true;
+
+    var baseUrl  = "https://survey.zohopublic.com/zs/" + surveyId;
+    var finalUrl = baseUrl + "?uid=" + encodeURIComponent(resolvedUid);
+
+    window.location.replace(finalUrl);
+  }
+
+  // ── RESOLVE USER ID ──
+
+  // 1. Direct URL check
+  var urlUid = urlParams.get("uid");
+  if (urlUid) {
+    redirectToZoho(urlUid);
+  }
+
+  // 2. Moodle postMessage Hook
+  window.addEventListener("message", function(event) {
+    if (!event.data || event.data.type !== "moodleUserId") return;
+    redirectToZoho(String(event.data.userId));
+  });
+
+  // 3. Fallback
+  setTimeout(function() {
+    // Double check the global flag before applying anonymous fallback
+    if (!window.surveyRedirectStarted) {
+      redirectToZoho("anonymous");
+    }
+  }, 2500);
+
+  function showError(msg) {
+    document.getElementById("loading-view").style.display = "none";
+    var errEl = document.getElementById("error-banner");
+    errEl.textContent = msg;
+    errEl.style.display = "block";
+  }
+})();
+</script>
+
+<script>
+  function sendHeight() {
+    window.parent.postMessage({ type: 'iframe-height', height: document.body.scrollHeight }, '*');
+  }
+  window.addEventListener('load', sendHeight);
+  window.addEventListener('resize', sendHeight);
+  var observer = new ResizeObserver(sendHeight);
+  observer.observe(document.body);
+</script>
+
+</body>
+</html>
